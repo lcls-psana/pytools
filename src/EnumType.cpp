@@ -15,6 +15,10 @@
 //-----------------------
 #include "pytools/EnumType.h"
 
+#if PY_MAJOR_VERSION >= 3
+#define IS_PY3K
+#endif
+
 //-----------------
 // C/C++ Headers --
 //-----------------
@@ -25,6 +29,7 @@
 //-------------------------------
 // Collaborating Class Headers --
 //-------------------------------
+#include "psana_python/PyUtil.h"
 
 //-----------------------------------------------------------------------
 // Local Macros, Typedefs, Structures, Unions and Forward Declarations --
@@ -32,11 +37,19 @@
 namespace {
 
   // enum object is an integer with attached name
+#ifdef IS_PY3K
+  struct EnumObject : PyLongObject {
+#else
   struct EnumObject : PyIntObject {
+#endif
     PyObject* en_name ;
   };
 
+#ifdef IS_PY3K
+  PyObject initHeader = {1, 0 }; // FIXME I cannot get this to compile with PyObject_HEAD_INIT
+#else
   PyObject initHeader = { PyObject_HEAD_INIT(0) };
+#endif
 
   char docString[] =
     "Python class which emulates C++ enumeration. It defines class attributes\n"
@@ -52,6 +65,21 @@ namespace {
   PyObject* Enum_str_int( PyObject* self );
   int Enum_init(PyObject* self, PyObject* args, PyObject* kwds);
 
+}
+
+EnumObject* EnumObject_from_Long(long val) {
+#ifdef IS_PY3K
+  PyLongObject* tmp = (PyLongObject*)PyLong_FromLong(val);
+  EnumObject* value = (EnumObject*)PyObject_MALLOC(sizeof(EnumObject) + abs(Py_SIZE(tmp))*sizeof(digit)); // FIXME this might be one digit too many
+  PyObject_INIT_VAR(value, &PyLong_Type, Py_SIZE(tmp));
+  for (size_t i = 0; i < abs(Py_SIZE(tmp)); i++)
+    value->ob_digit[i] = tmp->ob_digit[i];
+  // FIXME memleak from tmp?
+#else
+  EnumObject* value = PyObject_New(EnumObject, &m_type);
+  value->ob_ival = eiter->value;
+#endif
+  return value;
 }
 
 //		----------------------------------------
@@ -90,11 +118,13 @@ pytools::EnumType::EnumType(const char* typeName, Enum* enums)
   for (Enum* eiter = enums; eiter->name ; ++ eiter) {
 
     // build the object
-    EnumObject* value = PyObject_New(EnumObject, &m_type);
     std::string name = type + eiter->name;
-    value->ob_ival = eiter->value;
+    EnumObject* value = EnumObject_from_Long(eiter->value);
+#ifdef IS_PY3K
+    value->en_name = PyUnicode_FromString(name.c_str());
+#else
     value->en_name = PyString_FromString(name.c_str());
-
+#endif
     // store it in the class attribute
     PyDict_SetItemString( m_type.tp_dict, eiter->name, (PyObject*)value );
 
@@ -134,11 +164,19 @@ pytools::EnumType::initType(const char* typeName)
   m_type.tp_str = Enum_str_repr;
   m_type.tp_flags = Py_TPFLAGS_DEFAULT;
   m_type.tp_doc = 0;
+#ifdef IS_PY3K
+  m_type.tp_base = &PyLong_Type ;
+#else
   m_type.tp_base = &PyInt_Type ;
+#endif
   m_type.tp_init = Enum_init ;
   m_type.tp_alloc = PyType_GenericAlloc ;
   m_type.tp_new = PyType_GenericNew ;
+#ifdef IS_PY3K
+  m_type.tp_free = PyObject_Del ;
+#else
   m_type.tp_free = _PyObject_Del ;
+#endif
   m_type.tp_del = Enum_dealloc;
 
   PyObject* tp_dict = PyDict_New();
@@ -158,7 +196,11 @@ void pytools::EnumType::makeDocString()
   while (PyDict_Next(m_type.tp_dict, &ppos, &pkey, &pvalue)) {
     if (pvalue->ob_type == &m_type) {
       // pkey must be a string, what else could it be?
+#ifdef IS_PY3K
+      items.insert(std::make_pair(std::string(PyString_AsString_Compatible(pkey)), int(PyLong_AS_LONG(pvalue))));
+#else
       items.insert(std::make_pair(std::string(PyString_AsString(pkey)), int(PyInt_AS_LONG(pvalue))));
+#endif
     }
   }
 
@@ -190,10 +232,13 @@ pytools::EnumType::addEnum(const std::string& name, int value)
   ename += '.';
 
   // build the object
-  EnumObject* evalue = PyObject_New(EnumObject, &m_type);
+  EnumObject* evalue = EnumObject_from_Long(value);
   ename += name;
-  evalue->ob_ival = value;
+#ifdef IS_PY3K
+  evalue->en_name = PyUnicode_FromString(ename.c_str());
+#else
   evalue->en_name = PyString_FromString(ename.c_str());
+#endif
 
   // store it as the class attribute
   PyDict_SetItemString(m_type.tp_dict, name.c_str(), (PyObject*)evalue);
@@ -211,7 +256,11 @@ pytools::EnumType::Enum_FromLong( long value ) const
 {
   Int2Enum::const_iterator it = m_int2enum.find( value );
   if ( it == m_int2enum.end() ) {
+#ifdef IS_PY3K
+    return PyLong_FromLong(value);
+#else
     return PyInt_FromLong(value);
+#endif
   }
 
   Py_INCREF( it->second );
@@ -250,8 +299,10 @@ Enum_init(PyObject* self, PyObject* args, PyObject* kwds)
     PyErr_SetString(PyExc_RuntimeError, "Error: self is NULL");
     return -1;
   }
+#ifndef IS_PY3K
   py_this->ob_ival = 0;
   py_this->en_name = 0;
+#endif
 
   // expect integer or string
   PyObject* arg;
@@ -259,20 +310,43 @@ Enum_init(PyObject* self, PyObject* args, PyObject* kwds)
     return -1 ;
   }
 
+#ifdef IS_PY3K
+  if ( PyLong_Check(arg) ) {
+#else
   if ( PyInt_Check(arg) ) {
+#endif
 
     // dirty hack
     pytools::EnumType* enumType = (pytools::EnumType*)self->ob_type;
+#ifdef IS_PY3K
+    if ( PyObject* o = enumType->Enum_FromLong( PyLong_AsLong(arg) ) ) {
+#else
     if ( PyObject* o = enumType->Enum_FromLong( PyInt_AsLong(arg) ) ) {
+#endif
 
       if ( PyObject_TypeCheck( o, self->ob_type ) ) {
         EnumObject* enumObj = (EnumObject*)o;
+#ifdef IS_PY3K
+        if (Py_SIZE(py_this) != Py_SIZE(enumObj)) // FIXME this will likely only work for longs <= to the system upper limit for one diget of ob_digit
+          return -1;
+        for (size_t i = 0; i < abs(Py_SIZE(py_this)); i++)
+          py_this->ob_digit[i] = enumObj->ob_digit[i];
+#else
         py_this->ob_ival = enumObj->ob_ival;
+#endif
         py_this->en_name = enumObj->en_name;
         Py_INCREF(py_this->en_name);
       } else {
+#ifdef IS_PY3K
+        PyLongObject* enumObj = (PyLongObject*)o;
+        if (Py_SIZE(py_this) != Py_SIZE(enumObj)) // FIXME this will likely only work for longs <= to the system upper limit for one diget of ob_digit
+	  return -1;
+        for (size_t i = 0; i < abs(Py_SIZE(py_this)); i++)
+          py_this->ob_digit[i] = enumObj->ob_digit[i];
+#else
         PyIntObject* enumObj = (PyIntObject*)o;
         py_this->ob_ival = enumObj->ob_ival;
+#endif
         py_this->en_name = Py_None;
         Py_INCREF(py_this->en_name);
       }
@@ -283,14 +357,25 @@ Enum_init(PyObject* self, PyObject* args, PyObject* kwds)
 
     }
 
+#ifdef IS_PY3K
+  } else if ( PyUnicode_Check(arg) or PyBytes_Check(arg) ) {
+#else
   } else if ( PyString_Check(arg) ) {
+#endif
 
     // dirty hack
     pytools::EnumType* enumType = (pytools::EnumType*)self->ob_type;
-    if ( PyObject* o = enumType->Enum_FromString( PyString_AsString(arg) ) ) {
+    if ( PyObject* o = enumType->Enum_FromString( PyString_AsString_Compatible(arg).c_str() ) ) {
 
       EnumObject* enumObj = (EnumObject*)o;
+#ifdef IS_PY3K
+      if (Py_SIZE(py_this) != Py_SIZE(enumObj)) // FIXME this will likely only work for longs <= to the system upper limit for one diget of ob_digit
+	return -1;
+      for (size_t i = 0; i < abs(Py_SIZE(py_this)); i++)
+	py_this->ob_digit[i] = enumObj->ob_digit[i];
+#else
       py_this->ob_ival = enumObj->ob_ival;
+#endif
       py_this->en_name = enumObj->en_name;
       Py_INCREF(py_this->en_name);
 
@@ -331,10 +416,18 @@ Enum_str_repr( PyObject* self )
 PyObject*
 Enum_str_int( PyObject* self )
 {
+#ifdef IS_PY3K
+  long val = PyLong_AsLong(self);
+#else
   long val = ((PyIntObject*) self)->ob_ival;
+#endif
   char buf[64];
   snprintf(buf, sizeof buf, "%ld", val);
+#ifdef IS_PY3K
+  return PyUnicode_FromString(buf);
+#else
   return PyString_FromString(buf);
+#endif
 }
 
 }

@@ -15,6 +15,7 @@
 //-----------------
 #include "python/Python.h"
 #include <map>
+#include <string>
 
 //----------------------
 // Base Class Headers --

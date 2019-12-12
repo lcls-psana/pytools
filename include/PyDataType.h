@@ -19,6 +19,10 @@
 #include <iostream>
 #include <sstream>
 
+#if PY_MAJOR_VERSION >= 3
+#define IS_PY3K
+#endif
+
 //----------------------
 // Base Class Headers --
 //----------------------
@@ -90,16 +94,20 @@ protected:
 
   /// DEfault implementation of __new__ can be used by subclasses that need it
   static PyObject* PyDataType_new(PyTypeObject *subtype, PyObject *args, PyObject *kwds);
-  
+
   // standard Python deallocation function
   static void PyDataType_dealloc( PyObject* self );
 
-  
+
   // repr() function
   static PyObject* repr( PyObject *self )  {
     std::ostringstream str;
     static_cast<ConcreteType*>(self)->print(str);
+#ifdef IS_PY3K
+    return PyUnicode_FromString( str.str().c_str() );
+#else
     return PyString_FromString( str.str().c_str() );
+#endif
   }
 };
 
@@ -117,8 +125,12 @@ PyTypeObject*
 PyDataType<ConcreteType, CppType>::typeObject()
 {
   static PyTypeObject type = {
-    PyObject_HEAD_INIT(0)
+    PyObject_HEAD_INIT(0)    // PyObject_HEAD_INIT(type) expands to 1,type
+#ifdef IS_PY3K
+//    0,                       /*ob_size*/ // FIXME It's unclear why I had to comment this out in py3, but it seems keeps the functions below in register for what's expected
+#else
     0,                       /*ob_size*/
+#endif
     0,                       /*tp_name*/
     sizeof(ConcreteType),    /*tp_basicsize*/
     0,                       /*tp_itemsize*/
@@ -157,7 +169,11 @@ PyDataType<ConcreteType, CppType>::typeObject()
     0,                       /*tp_init*/
     PyType_GenericAlloc,     /*tp_alloc*/
     0,                       /*tp_new*/
+#ifdef IS_PY3K
+    PyObject_Del,           /*tp_free*/
+#else
     _PyObject_Del,           /*tp_free*/
+#endif
     0,                       /*tp_is_gc*/
     0,                       /*tp_bases*/
     0,                       /*tp_mro*/
@@ -170,7 +186,7 @@ PyDataType<ConcreteType, CppType>::typeObject()
 }
 
 template <typename ConcreteType, typename CppType>
-PyObject* 
+PyObject*
 PyDataType<ConcreteType, CppType>::PyDataType_new(PyTypeObject *subtype, PyObject *args, PyObject *kwds)
 {
   return subtype->tp_alloc(subtype, 1);
