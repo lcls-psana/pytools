@@ -85,7 +85,7 @@ public:
 
   // Returns _borrowed_ reference to Python type object
   PyObject* type() const {
-    return static_cast<PyObject*>((void*)&m_type); 
+    return static_cast<PyObject*>((void*)&m_type);
   }
 
   // Make instance of this type, returns new reference
@@ -98,6 +98,8 @@ protected:
   void makeDocString();
 
 private:
+
+  PyObject* EnumObject_from_Long(long val);
 
   typedef std::map<long,PyObject*> Int2Enum;
 

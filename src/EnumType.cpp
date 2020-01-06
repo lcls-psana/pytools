@@ -67,21 +67,6 @@ namespace {
 
 }
 
-EnumObject* EnumObject_from_Long(long val) {
-#ifdef IS_PY3K
-  PyLongObject* tmp = (PyLongObject*)PyLong_FromLong(val);
-  EnumObject* value = (EnumObject*)PyObject_MALLOC(sizeof(EnumObject) + abs(Py_SIZE(tmp))*sizeof(digit)); // FIXME this might be one digit too many
-  PyObject_INIT_VAR(value, &PyLong_Type, Py_SIZE(tmp));
-  for (size_t i = 0; i < abs(Py_SIZE(tmp)); i++)
-    value->ob_digit[i] = tmp->ob_digit[i];
-  // FIXME memleak from tmp?
-#else
-  EnumObject* value = PyObject_New(EnumObject, &m_type);
-  value->ob_ival = eiter->value;
-#endif
-  return value;
-}
-
 //		----------------------------------------
 // 		-- Public Function Member Definitions --
 //		----------------------------------------
@@ -119,7 +104,7 @@ pytools::EnumType::EnumType(const char* typeName, Enum* enums)
 
     // build the object
     std::string name = type + eiter->name;
-    EnumObject* value = EnumObject_from_Long(eiter->value);
+    EnumObject* value = (EnumObject*)EnumObject_from_Long(eiter->value);
 #ifdef IS_PY3K
     value->en_name = PyUnicode_FromString(name.c_str());
 #else
@@ -232,7 +217,7 @@ pytools::EnumType::addEnum(const std::string& name, int value)
   ename += '.';
 
   // build the object
-  EnumObject* evalue = EnumObject_from_Long(value);
+  EnumObject* evalue = (EnumObject*)EnumObject_from_Long(value);
   ename += name;
 #ifdef IS_PY3K
   evalue->en_name = PyUnicode_FromString(ename.c_str());
@@ -248,6 +233,22 @@ pytools::EnumType::addEnum(const std::string& name, int value)
 
   // update doc string
   makeDocString();
+}
+
+PyObject*
+pytools::EnumType::EnumObject_from_Long(long val) {
+#ifdef IS_PY3K
+  PyLongObject* tmp = (PyLongObject*)PyLong_FromLong(val);
+  EnumObject* value = (EnumObject*)PyObject_MALLOC(sizeof(EnumObject) + abs(Py_SIZE(tmp))*sizeof(digit)); // FIXME this might be one digit too many
+  PyObject_INIT_VAR(value, &PyLong_Type, Py_SIZE(tmp));
+  for (size_t i = 0; i < abs(Py_SIZE(tmp)); i++)
+    value->ob_digit[i] = tmp->ob_digit[i];
+  // FIXME memleak from tmp?
+#else
+  EnumObject* value = PyObject_New(EnumObject, &m_type);
+  value->ob_ival = val;
+#endif
+  return (PyObject*) value;
 }
 
 // Make instance of this type
