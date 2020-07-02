@@ -23,8 +23,8 @@ std::string PyString_AsString_Compatible(PyObject* obj) {
   }
   else if (PyBytes_Check(obj)) {
     char* my_result = PyBytes_AS_STRING(obj); // Borrowed pointer
-    my_result = strdup(my_result);
-    result += my_result;
+    Py_ssize_t count = PyBytes_GET_SIZE(obj);
+    result = std::string(my_result,count);
   }
 #else
   std::string result = PyString_AsString(obj);
