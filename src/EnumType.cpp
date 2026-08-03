@@ -239,11 +239,13 @@ PyObject*
 pytools::EnumType::EnumObject_from_Long(long val) {
 #ifdef IS_PY3K
   PyLongObject* tmp = (PyLongObject*)PyLong_FromLong(val);
-  EnumObject* value = (EnumObject*)PyObject_MALLOC(sizeof(EnumObject) + abs(Py_SIZE(tmp))*sizeof(digit)); // FIXME this might be one digit too many
-  PyObject_INIT_VAR(value, &PyLong_Type, Py_SIZE(tmp));
-  for (size_t i = 0; i < abs(Py_SIZE(tmp)); i++)
-    value->ob_digit[i] = tmp->ob_digit[i];
-  // FIXME memleak from tmp?
+  // In Python 3.12+, ob_digit is nested in long_value; digit count is lv_tag >> _PyLong_NON_SIZE_BITS
+  Py_ssize_t ndigits = (Py_ssize_t)(tmp->long_value.lv_tag >> _PyLong_NON_SIZE_BITS);
+  EnumObject* value = (EnumObject*)PyObject_MALLOC(sizeof(EnumObject) + ndigits*sizeof(digit));
+  PyObject_INIT_VAR(value, &m_type, Py_SIZE(tmp)); // sets ob_type=m_type and lv_tag=tmp->lv_tag via ob_size overlap
+  for (Py_ssize_t i = 0; i < ndigits; i++)
+    value->long_value.ob_digit[i] = tmp->long_value.ob_digit[i];
+  Py_DECREF(tmp);
 #else
   EnumObject* value = PyObject_New(EnumObject, &m_type);
   value->ob_ival = val;
@@ -328,10 +330,11 @@ Enum_init(PyObject* self, PyObject* args, PyObject* kwds)
       if ( PyObject_TypeCheck( o, self->ob_type ) ) {
         EnumObject* enumObj = (EnumObject*)o;
 #ifdef IS_PY3K
-        if (Py_SIZE(py_this) != Py_SIZE(enumObj)) // FIXME this will likely only work for longs <= to the system upper limit for one diget of ob_digit
-          return -1;
-        for (size_t i = 0; i < abs(Py_SIZE(py_this)); i++)
-          py_this->ob_digit[i] = enumObj->ob_digit[i];
+        // Copy lv_tag (encodes digit count, sign, flags) then copy digits
+        py_this->long_value.lv_tag = enumObj->long_value.lv_tag;
+        { Py_ssize_t nd = (Py_ssize_t)(py_this->long_value.lv_tag >> _PyLong_NON_SIZE_BITS);
+          for (Py_ssize_t i = 0; i < nd; i++)
+            py_this->long_value.ob_digit[i] = enumObj->long_value.ob_digit[i]; }
 #else
         py_this->ob_ival = enumObj->ob_ival;
 #endif
@@ -340,10 +343,10 @@ Enum_init(PyObject* self, PyObject* args, PyObject* kwds)
       } else {
 #ifdef IS_PY3K
         PyLongObject* enumObj = (PyLongObject*)o;
-        if (Py_SIZE(py_this) != Py_SIZE(enumObj)) // FIXME this will likely only work for longs <= to the system upper limit for one diget of ob_digit
-	  return -1;
-        for (size_t i = 0; i < abs(Py_SIZE(py_this)); i++)
-          py_this->ob_digit[i] = enumObj->ob_digit[i];
+        py_this->long_value.lv_tag = enumObj->long_value.lv_tag;
+        { Py_ssize_t nd = (Py_ssize_t)(py_this->long_value.lv_tag >> _PyLong_NON_SIZE_BITS);
+          for (Py_ssize_t i = 0; i < nd; i++)
+            py_this->long_value.ob_digit[i] = enumObj->long_value.ob_digit[i]; }
 #else
         PyIntObject* enumObj = (PyIntObject*)o;
         py_this->ob_ival = enumObj->ob_ival;
@@ -370,10 +373,10 @@ Enum_init(PyObject* self, PyObject* args, PyObject* kwds)
 
       EnumObject* enumObj = (EnumObject*)o;
 #ifdef IS_PY3K
-      if (Py_SIZE(py_this) != Py_SIZE(enumObj)) // FIXME this will likely only work for longs <= to the system upper limit for one diget of ob_digit
-	return -1;
-      for (size_t i = 0; i < abs(Py_SIZE(py_this)); i++)
-	py_this->ob_digit[i] = enumObj->ob_digit[i];
+      py_this->long_value.lv_tag = enumObj->long_value.lv_tag;
+      { Py_ssize_t nd = (Py_ssize_t)(py_this->long_value.lv_tag >> _PyLong_NON_SIZE_BITS);
+        for (Py_ssize_t i = 0; i < nd; i++)
+          py_this->long_value.ob_digit[i] = enumObj->long_value.ob_digit[i]; }
 #else
       py_this->ob_ival = enumObj->ob_ival;
 #endif
