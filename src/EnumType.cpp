@@ -239,10 +239,15 @@ PyObject*
 pytools::EnumType::EnumObject_from_Long(long val) {
 #ifdef IS_PY3K
   PyLongObject* tmp = (PyLongObject*)PyLong_FromLong(val);
-  // In Python 3.12+, ob_digit is nested in long_value; digit count is lv_tag >> _PyLong_NON_SIZE_BITS
+  // In Python 3.12+, ob_digit is nested in long_value; digit count is lv_tag >> _PyLong_NON_SIZE_BITS.
+  // Note: PyLongObject no longer has an ob_size field (it's a plain PyObject, not a PyVarObject),
+  // so we must not use Py_SIZE()/PyObject_INIT_VAR() here -- Py_SIZE() even asserts that its
+  // argument is not a real PyLongObject/PyBool. Instead just init the header and copy lv_tag +
+  // digits directly, the same way the rest of this file already does (see Enum_init below).
   Py_ssize_t ndigits = (Py_ssize_t)(tmp->long_value.lv_tag >> _PyLong_NON_SIZE_BITS);
   EnumObject* value = (EnumObject*)PyObject_MALLOC(sizeof(EnumObject) + ndigits*sizeof(digit));
-  PyObject_INIT_VAR(value, &m_type, Py_SIZE(tmp)); // sets ob_type=m_type and lv_tag=tmp->lv_tag via ob_size overlap
+  PyObject_INIT(value, &m_type); // sets ob_type=&m_type and refcnt=1
+  value->long_value.lv_tag = tmp->long_value.lv_tag;
   for (Py_ssize_t i = 0; i < ndigits; i++)
     value->long_value.ob_digit[i] = tmp->long_value.ob_digit[i];
   Py_DECREF(tmp);
